@@ -1,0 +1,51 @@
+{
+  "name": "code-review-council",
+  "version": "0.1.0",
+  "description": "An OpenCode plugin that orchestrates parallel AI code reviews from multiple models and synthesizes the results",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "agents",
+    "commands"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "code-review",
+    "ai",
+    "multi-agent",
+    "council"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/floppey/CodeReviewCouncel"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*",
+    "@opencode-ai/sdk": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "0.0.0-beta-202602081914",
+    "@opencode-ai/sdk": "0.0.0-beta-202602081914",
+    "@types/node": "^25.2.2",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "zod": "^3.24.0"
+  }
+}
