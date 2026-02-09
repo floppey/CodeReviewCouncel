@@ -1,5 +1,15 @@
-import { describe, it, expect } from "vitest";
-import { resolveConfig, extractCouncilConfig } from "../src/config.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { resolveConfig, loadConfigFile } from "../src/config.js";
+import * as path from "node:path";
+
+// Mock the entire node:fs module for ESM compatibility
+vi.mock("node:fs", () => ({
+  readFileSync: vi.fn(),
+}));
+
+// Import the mocked module
+import { readFileSync } from "node:fs";
+const mockedReadFileSync = vi.mocked(readFileSync);
 
 describe("resolveConfig", () => {
   it("returns defaults when no config provided", () => {
@@ -86,31 +96,63 @@ describe("resolveConfig", () => {
   });
 });
 
-describe("extractCouncilConfig", () => {
-  it("extracts config from codeReviewCouncil key", () => {
-    const config = extractCouncilConfig({
-      codeReviewCouncil: {
-        maxConcurrent: 5,
-      },
+describe("loadConfigFile", () => {
+  beforeEach(() => {
+    mockedReadFileSync.mockReset();
+  });
+
+  it("returns defaults when config file does not exist", () => {
+    mockedReadFileSync.mockImplementation(() => {
+      throw new Error("ENOENT: no such file or directory");
     });
 
+    const config = loadConfigFile("/fake/project");
+
+    expect(config.reviewers).toHaveLength(3);
+    expect(config.maxConcurrent).toBe(3);
+    expect(config.defaultTimeout).toBe(120_000);
+  });
+
+  it("reads config from .opencode/code-review-council.json", () => {
+    const customConfig = JSON.stringify({
+      maxConcurrent: 5,
+      synthesizer: { model: "openai/o3" },
+    });
+    mockedReadFileSync.mockReturnValue(customConfig);
+
+    const config = loadConfigFile("/fake/project");
+
+    expect(mockedReadFileSync).toHaveBeenCalledWith(
+      path.join("/fake/project", ".opencode", "code-review-council.json"),
+      "utf-8",
+    );
     expect(config.maxConcurrent).toBe(5);
-    // Rest should be defaults
+    expect(config.synthesizer.model).toBe("openai/o3");
+    // Reviewers should still be defaults
     expect(config.reviewers).toHaveLength(3);
   });
 
-  it("returns defaults when codeReviewCouncil is missing", () => {
-    const config = extractCouncilConfig({});
+  it("returns defaults when config file contains invalid JSON", () => {
+    mockedReadFileSync.mockReturnValue("not valid json {{{");
+
+    const config = loadConfigFile("/fake/project");
 
     expect(config.reviewers).toHaveLength(3);
     expect(config.maxConcurrent).toBe(3);
   });
 
-  it("returns defaults when codeReviewCouncil is undefined", () => {
-    const config = extractCouncilConfig({
-      codeReviewCouncil: undefined,
+  it("overrides reviewers from config file", () => {
+    const customConfig = JSON.stringify({
+      reviewers: [
+        { agent: "custom-reviewer", model: "openai/gpt-4o" },
+      ],
     });
+    mockedReadFileSync.mockReturnValue(customConfig);
 
-    expect(config.reviewers).toHaveLength(3);
+    const config = loadConfigFile("/fake/project");
+
+    expect(config.reviewers).toHaveLength(1);
+    expect(config.reviewers[0].agent).toBe("custom-reviewer");
+    expect(config.reviewers[0].model).toBe("openai/gpt-4o");
   });
 });

@@ -14,6 +14,7 @@ export interface ShellExecutor {
  *   - (empty)       → unstaged changes
  *   - "staged"      → staged changes
  *   - "last-commit" → diff of last commit
+ *   - "repo"        → entire repository contents
  *   - "file1 file2" → specific files
  */
 export function parseDiffSource(args: string): DiffSource {
@@ -29,6 +30,10 @@ export function parseDiffSource(args: string): DiffSource {
 
   if (trimmed === "last-commit") {
     return { type: "last-commit" };
+  }
+
+  if (trimmed === "repo") {
+    return { type: "repo" };
   }
 
   // Treat as file paths (space-separated)
@@ -47,6 +52,10 @@ export function buildDiffCommand(source: DiffSource): string {
       return "git diff --cached";
     case "last-commit":
       return "git diff HEAD~1";
+    case "repo":
+      // List all tracked files (respects .gitignore), then for each file
+      // output a header with the filename and its contents.
+      return 'git ls-files | while IFS= read -r f; do echo "=== $f ==="; cat "$f"; echo; done';
     case "files":
       // For files we concatenate them with cat
       return source.paths.map((p) => `cat "${p}"`).join(" && echo '---' && ");
@@ -72,6 +81,9 @@ export async function gatherDiff(
     }
     if (source.type === "last-commit") {
       return "No changes in last commit. Nothing to review.";
+    }
+    if (source.type === "repo") {
+      return "No tracked files found in the repository. Nothing to review.";
     }
     return "No content found for the specified files.";
   }

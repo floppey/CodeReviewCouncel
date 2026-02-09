@@ -29,6 +29,41 @@ Then add it to your `opencode.json`:
 }
 ```
 
+## Local Development (without publishing to npm)
+
+To test the plugin locally against any project:
+
+```bash
+# 1. Clone and install
+git clone https://github.com/floppey/CodeReviewCouncel.git
+cd CodeReviewCouncel
+npm install
+
+# 2. Build and install into the local .opencode/ directory
+npm run dev
+```
+
+This compiles TypeScript and copies the built plugin, agent definitions, commands, and a default config into `.opencode/`, which OpenCode auto-loads on startup.
+
+You can customize the council by editing `.opencode/code-review-council.json`:
+
+```json
+{
+  "reviewers": [
+    { "agent": "reviewer-security", "model": "anthropic/claude-sonnet-4-20250514" },
+    { "agent": "reviewer-quality", "model": "anthropic/claude-sonnet-4-20250514" },
+    { "agent": "reviewer-bugs", "model": "anthropic/claude-sonnet-4-20250514" }
+  ],
+  "synthesizer": { "model": "anthropic/claude-sonnet-4-20250514" },
+  "maxConcurrent": 3,
+  "defaultTimeout": 120000
+}
+```
+
+Now start OpenCode in the project directory and run `/review`.
+
+After making changes to the plugin source, re-run `npm run dev` to rebuild and reinstall.
+
 ## Usage
 
 ### Slash Command
@@ -37,6 +72,7 @@ Then add it to your `opencode.json`:
 /review              — Review unstaged changes
 /review staged       — Review staged changes
 /review last-commit  — Review the last commit
+/review repo         — Review the entire repository
 /review file1 file2  — Review specific files
 ```
 
@@ -46,34 +82,29 @@ The plugin also registers a `code-review-council` tool that agents can call prog
 
 ## Configuration
 
-Add a `codeReviewCouncil` section to your `opencode.json` to customize the reviewers, models, and behavior:
+Create or edit `.opencode/code-review-council.json` in your project to customize the reviewers, models, and behavior:
 
 ```json
 {
-  "plugins": {
-    "code-review-council": true
-  },
-  "codeReviewCouncil": {
-    "reviewers": [
-      {
-        "agent": "reviewer-security",
-        "model": "anthropic/claude-opus-4-20250514"
-      },
-      {
-        "agent": "reviewer-quality",
-        "model": "openai/codex-5.2"
-      },
-      {
-        "agent": "reviewer-bugs",
-        "model": "anthropic/claude-sonnet-4-20250514"
-      }
-    ],
-    "synthesizer": {
+  "reviewers": [
+    {
+      "agent": "reviewer-security",
       "model": "anthropic/claude-opus-4-20250514"
     },
-    "maxConcurrent": 3,
-    "defaultTimeout": 120000
-  }
+    {
+      "agent": "reviewer-quality",
+      "model": "openai/codex-5.2"
+    },
+    {
+      "agent": "reviewer-bugs",
+      "model": "anthropic/claude-sonnet-4-20250514"
+    }
+  ],
+  "synthesizer": {
+    "model": "anthropic/claude-opus-4-20250514"
+  },
+  "maxConcurrent": 3,
+  "defaultTimeout": 120000
 }
 ```
 

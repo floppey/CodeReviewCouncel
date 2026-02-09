@@ -28,6 +28,10 @@ describe("parseDiffSource", () => {
     expect(parseDiffSource("last-commit")).toEqual({ type: "last-commit" });
   });
 
+  it("returns repo for 'repo'", () => {
+    expect(parseDiffSource("repo")).toEqual({ type: "repo" });
+  });
+
   it("returns files for file paths", () => {
     expect(parseDiffSource("src/foo.ts src/bar.ts")).toEqual({
       type: "files",
@@ -58,6 +62,12 @@ describe("buildDiffCommand", () => {
 
   it("builds git diff HEAD~1 for last-commit", () => {
     expect(buildDiffCommand({ type: "last-commit" })).toBe("git diff HEAD~1");
+  });
+
+  it("builds git ls-files command for repo", () => {
+    const cmd = buildDiffCommand({ type: "repo" });
+    expect(cmd).toContain("git ls-files");
+    expect(cmd).toContain("cat");
   });
 
   it("builds cat commands for files", () => {
@@ -96,6 +106,12 @@ describe("gatherDiff", () => {
     const exec = vi.fn().mockResolvedValue("\n");
     const result = await gatherDiff({ type: "last-commit" }, exec);
     expect(result).toContain("No changes in last commit");
+  });
+
+  it("returns message for empty repo content", async () => {
+    const exec = vi.fn().mockResolvedValue("");
+    const result = await gatherDiff({ type: "repo" }, exec);
+    expect(result).toContain("No tracked files");
   });
 
   it("returns message for empty file content", async () => {

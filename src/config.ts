@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { CouncilConfig, ReviewerConfig, SynthesizerConfig } from "./types.js";
 
 /**
  * Default reviewer configurations.
- * Users can override these entirely via opencode.json.
+ * Users can override these via .opencode/code-review-council.json.
  */
 const DEFAULT_REVIEWERS: ReviewerConfig[] = [
   {
@@ -27,8 +29,8 @@ const DEFAULT_MAX_CONCURRENT = 3;
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
- * Raw shape of the config as it appears in opencode.json
- * (all fields optional since users may only override some).
+ * Raw shape of the config file (.opencode/code-review-council.json).
+ * All fields optional since users may only override some.
  */
 interface RawCouncilConfig {
   reviewers?: Array<{
@@ -76,15 +78,18 @@ export function resolveConfig(raw?: RawCouncilConfig): CouncilConfig {
 }
 
 /**
- * Extract the council config from the full opencode config object.
- * The config hook receives the entire opencode config; we look for
- * our section under "codeReviewCouncil".
+ * Load the council config from .opencode/code-review-council.json
+ * relative to the given project directory. Falls back to defaults
+ * if the file doesn't exist or is invalid.
  */
-export function extractCouncilConfig(
-  opencodeConfig: Record<string, unknown>,
-): CouncilConfig {
-  const raw = opencodeConfig["codeReviewCouncil"] as
-    | RawCouncilConfig
-    | undefined;
-  return resolveConfig(raw);
+export function loadConfigFile(directory: string): CouncilConfig {
+  const configPath = join(directory, ".opencode", "code-review-council.json");
+  try {
+    const content = readFileSync(configPath, "utf-8");
+    const raw = JSON.parse(content) as RawCouncilConfig;
+    return resolveConfig(raw);
+  } catch {
+    // File doesn't exist or is invalid — use defaults
+    return resolveConfig();
+  }
 }

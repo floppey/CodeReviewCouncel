@@ -36,7 +36,7 @@ export interface SynthesizerConfig {
 }
 
 /**
- * Full plugin configuration as read from opencode.json.
+ * Full plugin configuration as read from .opencode/code-review-council.json.
  */
 export interface CouncilConfig {
   reviewers: ReviewerConfig[];
@@ -54,6 +54,7 @@ export type DiffSource =
   | { type: "unstaged" }
   | { type: "staged" }
   | { type: "last-commit" }
+  | { type: "repo" }
   | { type: "files"; paths: string[] };
 
 /**

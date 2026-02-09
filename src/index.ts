@@ -1,16 +1,15 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
-import { extractCouncilConfig } from "./config.js";
+import { loadConfigFile } from "./config.js";
 import { parseDiffSource, gatherDiff, formatCouncilReport } from "./utils.js";
 import type { ShellExecutor } from "./utils.js";
 import { runCouncil } from "./orchestrator.js";
-import type { CouncilConfig } from "./types.js";
 
 const plugin: Plugin = async (input) => {
-  const { client, $ } = input;
+  const { client, $, directory } = input;
 
-  // Resolve config — will be updated if config hook fires
-  let councilConfig: CouncilConfig | undefined;
+  // Load config from .opencode/code-review-council.json
+  const councilConfig = loadConfigFile(directory);
 
   // Shell executor using the BunShell provided by the plugin system.
   // We use $.nothrow() so empty diffs don't throw, then read stdout as text.
@@ -21,21 +20,9 @@ const plugin: Plugin = async (input) => {
   };
 
   return {
-    config: async (config) => {
-      // Extract our plugin config from the full opencode config
-      councilConfig = extractCouncilConfig(
-        config as unknown as Record<string, unknown>,
-      );
-    },
-
     "command.execute.before": async (commandInput, output) => {
       if (commandInput.command !== "review") {
         return;
-      }
-
-      // Ensure config is loaded
-      if (!councilConfig) {
-        councilConfig = extractCouncilConfig({});
       }
 
       const diffSource = parseDiffSource(commandInput.arguments);
@@ -89,15 +76,10 @@ const plugin: Plugin = async (input) => {
             .string()
             .optional()
             .describe(
-              'What to review: "staged", "last-commit", or space-separated file paths. Empty = unstaged changes.',
+              'What to review: "staged", "last-commit", "repo" (entire repo), or space-separated file paths. Empty = unstaged changes.',
             ),
         },
         execute: async (args, context) => {
-          // Ensure config is loaded
-          if (!councilConfig) {
-            councilConfig = extractCouncilConfig({});
-          }
-
           const diffSource = parseDiffSource(args.source ?? "");
           const diff = await gatherDiff(diffSource, exec);
 
