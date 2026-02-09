@@ -3,26 +3,31 @@ import { join } from "node:path";
 import type { CouncilConfig, ReviewerConfig, SynthesizerConfig } from "./types.js";
 
 /**
+ * Default model used across all reviewers and the synthesizer.
+ */
+export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-20250514";
+
+/**
  * Default reviewer configurations.
  * Users can override these via .opencode/code-review-council.json.
  */
 const DEFAULT_REVIEWERS: ReviewerConfig[] = [
   {
     agent: "reviewer-security",
-    model: "anthropic/claude-sonnet-4-20250514",
+    model: DEFAULT_MODEL,
   },
   {
     agent: "reviewer-quality",
-    model: "anthropic/claude-sonnet-4-20250514",
+    model: DEFAULT_MODEL,
   },
   {
     agent: "reviewer-bugs",
-    model: "anthropic/claude-sonnet-4-20250514",
+    model: DEFAULT_MODEL,
   },
 ];
 
 const DEFAULT_SYNTHESIZER: SynthesizerConfig = {
-  model: "anthropic/claude-sonnet-4-20250514",
+  model: DEFAULT_MODEL,
 };
 
 const DEFAULT_MAX_CONCURRENT = 3;
@@ -56,7 +61,7 @@ export function resolveConfig(raw?: RawCouncilConfig): CouncilConfig {
     raw?.reviewers && raw.reviewers.length > 0
       ? raw.reviewers.map((r, i) => ({
           agent: r.agent ?? DEFAULT_REVIEWERS[i]?.agent ?? `reviewer-${i}`,
-          model: r.model ?? DEFAULT_REVIEWERS[i]?.model ?? DEFAULT_REVIEWERS[0].model,
+          model: r.model ?? DEFAULT_REVIEWERS[i]?.model ?? DEFAULT_MODEL,
           timeout: r.timeout ?? defaultTimeout,
         }))
       : DEFAULT_REVIEWERS.map((r) => ({
@@ -88,8 +93,14 @@ export function loadConfigFile(directory: string): CouncilConfig {
     const content = readFileSync(configPath, "utf-8");
     const raw = JSON.parse(content) as RawCouncilConfig;
     return resolveConfig(raw);
-  } catch {
-    // File doesn't exist or is invalid — use defaults
+  } catch (err) {
+    // Distinguish between file-not-found (expected) and parse errors (warn-worthy)
+    if (err instanceof SyntaxError) {
+      console.warn(
+        `[code-review-council] Invalid JSON in ${configPath}: ${err.message}. Using default configuration.`,
+      );
+    }
+    // File doesn't exist or other error — use defaults silently
     return resolveConfig();
   }
 }

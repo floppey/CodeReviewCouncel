@@ -1,14 +1,16 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   parseDiffSource,
-  buildDiffCommand,
+  buildGitDiffCommand,
   gatherDiff,
   formatReviewResult,
   formatReviewsForSynthesis,
   formatCouncilReport,
   runWithConcurrency,
   withTimeout,
+  parseModelString,
 } from "../src/utils.js";
+import type { FileReader } from "../src/utils.js";
 import type { ReviewResult, DiffSource } from "../src/types.js";
 
 describe("parseDiffSource", () => {
@@ -49,78 +51,147 @@ describe("parseDiffSource", () => {
       paths: ["main.ts"],
     });
   });
+
+  it("handles quoted paths with spaces", () => {
+    expect(parseDiffSource('"path with spaces/file.ts" other.ts')).toEqual({
+      type: "files",
+      paths: ["path with spaces/file.ts", "other.ts"],
+    });
+  });
+
+  it("handles single-quoted paths with spaces", () => {
+    expect(parseDiffSource("'my dir/test.ts'")).toEqual({
+      type: "files",
+      paths: ["my dir/test.ts"],
+    });
+  });
 });
 
-describe("buildDiffCommand", () => {
+describe("buildGitDiffCommand", () => {
   it("builds git diff for unstaged", () => {
-    expect(buildDiffCommand({ type: "unstaged" })).toBe("git diff");
+    expect(buildGitDiffCommand({ type: "unstaged" })).toBe("git diff");
   });
 
   it("builds git diff --cached for staged", () => {
-    expect(buildDiffCommand({ type: "staged" })).toBe("git diff --cached");
+    expect(buildGitDiffCommand({ type: "staged" })).toBe("git diff --cached");
   });
 
   it("builds git diff HEAD~1 for last-commit", () => {
-    expect(buildDiffCommand({ type: "last-commit" })).toBe("git diff HEAD~1");
-  });
-
-  it("builds git ls-files command for repo", () => {
-    const cmd = buildDiffCommand({ type: "repo" });
-    expect(cmd).toContain("git ls-files");
-    expect(cmd).toContain("cat");
-  });
-
-  it("builds cat commands for files", () => {
-    const source: DiffSource = {
-      type: "files",
-      paths: ["a.ts", "b.ts"],
-    };
-    const cmd = buildDiffCommand(source);
-    expect(cmd).toContain('cat "a.ts"');
-    expect(cmd).toContain('cat "b.ts"');
+    expect(buildGitDiffCommand({ type: "last-commit" })).toBe("git diff HEAD~1");
   });
 });
 
 describe("gatherDiff", () => {
-  it("returns diff output when non-empty", async () => {
+  it("returns content for non-empty unstaged diff", async () => {
     const exec = vi.fn().mockResolvedValue("+ added line\n- removed line\n");
     const result = await gatherDiff({ type: "unstaged" }, exec);
 
     expect(exec).toHaveBeenCalledWith("git diff");
-    expect(result).toBe("+ added line\n- removed line\n");
+    expect(result).toEqual({ content: "+ added line\n- removed line\n" });
   });
 
-  it("returns message for empty unstaged diff", async () => {
+  it("returns empty message for empty unstaged diff", async () => {
     const exec = vi.fn().mockResolvedValue("");
     const result = await gatherDiff({ type: "unstaged" }, exec);
-    expect(result).toContain("No unstaged changes");
+    expect("empty" in result).toBe(true);
+    if ("empty" in result) {
+      expect(result.empty).toContain("No unstaged changes");
+    }
   });
 
-  it("returns message for empty staged diff", async () => {
+  it("returns empty message for empty staged diff", async () => {
     const exec = vi.fn().mockResolvedValue("  ");
     const result = await gatherDiff({ type: "staged" }, exec);
-    expect(result).toContain("No staged changes");
+    expect("empty" in result).toBe(true);
+    if ("empty" in result) {
+      expect(result.empty).toContain("No staged changes");
+    }
   });
 
-  it("returns message for empty last-commit diff", async () => {
+  it("returns empty message for empty last-commit diff", async () => {
     const exec = vi.fn().mockResolvedValue("\n");
     const result = await gatherDiff({ type: "last-commit" }, exec);
-    expect(result).toContain("No changes in last commit");
+    expect("empty" in result).toBe(true);
+    if ("empty" in result) {
+      expect(result.empty).toContain("No changes in last commit");
+    }
   });
 
-  it("returns message for empty repo content", async () => {
+  it("returns empty message for empty repo (no tracked files)", async () => {
     const exec = vi.fn().mockResolvedValue("");
     const result = await gatherDiff({ type: "repo" }, exec);
-    expect(result).toContain("No tracked files");
+    expect("empty" in result).toBe(true);
+    if ("empty" in result) {
+      expect(result.empty).toContain("No tracked files");
+    }
   });
 
-  it("returns message for empty file content", async () => {
-    const exec = vi.fn().mockResolvedValue("");
+  it("reads repo files via fileReader, not shell", async () => {
+    const exec = vi.fn().mockResolvedValue("a.ts\nb.ts\n");
+    const fileReader: FileReader = vi.fn()
+      .mockResolvedValueOnce("content of a")
+      .mockResolvedValueOnce("content of b") as unknown as FileReader;
+
+    const result = await gatherDiff({ type: "repo" }, exec, fileReader);
+
+    expect(exec).toHaveBeenCalledWith("git ls-files");
+    expect(fileReader).toHaveBeenCalledWith("a.ts");
+    expect(fileReader).toHaveBeenCalledWith("b.ts");
+    expect("content" in result).toBe(true);
+    if ("content" in result) {
+      expect(result.content).toContain("content of a");
+      expect(result.content).toContain("content of b");
+    }
+  });
+
+  it("reads specific files via fileReader", async () => {
+    const exec = vi.fn();
+    const fileReader: FileReader = vi.fn()
+      .mockResolvedValueOnce("file content") as unknown as FileReader;
+
+    const result = await gatherDiff(
+      { type: "files", paths: ["test.ts"] },
+      exec,
+      fileReader,
+    );
+
+    expect(exec).not.toHaveBeenCalled();
+    expect(fileReader).toHaveBeenCalledWith("test.ts");
+    expect("content" in result).toBe(true);
+  });
+
+  it("returns empty for files with no paths", async () => {
+    const exec = vi.fn();
+    const fileReader: FileReader = vi.fn() as unknown as FileReader;
+
+    const result = await gatherDiff(
+      { type: "files", paths: [] },
+      exec,
+      fileReader,
+    );
+
+    expect("empty" in result).toBe(true);
+    if ("empty" in result) {
+      expect(result.empty).toContain("No content found");
+    }
+  });
+
+  it("handles fileReader errors gracefully", async () => {
+    const exec = vi.fn();
+    const fileReader: FileReader = vi.fn()
+      .mockRejectedValueOnce(new Error("ENOENT")) as unknown as FileReader;
+
     const result = await gatherDiff(
       { type: "files", paths: ["missing.ts"] },
       exec,
+      fileReader,
     );
-    expect(result).toContain("No content found");
+
+    // Should still return content (with error message), not throw
+    expect("content" in result).toBe(true);
+    if ("content" in result) {
+      expect(result.content).toContain("[Error: could not read file]");
+    }
   });
 });
 
@@ -245,7 +316,7 @@ describe("formatCouncilReport", () => {
 });
 
 describe("runWithConcurrency", () => {
-  it("runs all tasks and returns results", async () => {
+  it("runs all tasks and returns results in order", async () => {
     const tasks = [
       () => Promise.resolve(1),
       () => Promise.resolve(2),
@@ -254,7 +325,19 @@ describe("runWithConcurrency", () => {
 
     const results = await runWithConcurrency(tasks, 2);
     expect(results).toHaveLength(3);
-    expect(results.sort()).toEqual([1, 2, 3]);
+    // Results should preserve input order (fix #3)
+    expect(results).toEqual([1, 2, 3]);
+  });
+
+  it("preserves order even with different completion times", async () => {
+    const tasks = [
+      () => new Promise<string>((r) => setTimeout(() => r("slow"), 50)),
+      () => Promise.resolve("fast"),
+      () => new Promise<string>((r) => setTimeout(() => r("medium"), 20)),
+    ];
+
+    const results = await runWithConcurrency(tasks, 3);
+    expect(results).toEqual(["slow", "fast", "medium"]);
   });
 
   it("respects concurrency limit", async () => {
@@ -307,5 +390,33 @@ describe("withTimeout", () => {
     await expect(
       withTimeout(failPromise, 1000, "test"),
     ).rejects.toThrow("original error");
+  });
+});
+
+describe("parseModelString", () => {
+  it("parses a valid provider/model string", () => {
+    const result = parseModelString("anthropic/claude-opus-4-20250514");
+    expect(result).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-opus-4-20250514",
+    });
+  });
+
+  it("handles model IDs with multiple slashes", () => {
+    const result = parseModelString("openai/gpt-4o/2025-01-01");
+    expect(result).toEqual({
+      providerID: "openai",
+      modelID: "gpt-4o/2025-01-01",
+    });
+  });
+
+  it("throws on missing slash", () => {
+    expect(() => parseModelString("no-slash-here")).toThrow(
+      'Invalid model format "no-slash-here"',
+    );
+  });
+
+  it("throws on empty string", () => {
+    expect(() => parseModelString("")).toThrow("Invalid model format");
   });
 });

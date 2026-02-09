@@ -6,8 +6,8 @@ import type {
   CouncilReport,
   ModelIdentifier,
 } from "./types.js";
-import { parseModelString } from "./types.js";
 import {
+  parseModelString,
   runWithConcurrency,
   withTimeout,
   formatReviewsForSynthesis,

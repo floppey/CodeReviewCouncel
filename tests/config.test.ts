@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { resolveConfig, loadConfigFile } from "../src/config.js";
+import { resolveConfig, loadConfigFile, DEFAULT_MODEL } from "../src/config.js";
 import * as path from "node:path";
 
 // Mock the entire node:fs module for ESM compatibility
@@ -12,6 +12,14 @@ import { readFileSync } from "node:fs";
 const mockedReadFileSync = vi.mocked(readFileSync);
 
 describe("resolveConfig", () => {
+  it("uses DEFAULT_MODEL for all defaults", () => {
+    const config = resolveConfig();
+    for (const reviewer of config.reviewers) {
+      expect(reviewer.model).toBe(DEFAULT_MODEL);
+    }
+    expect(config.synthesizer.model).toBe(DEFAULT_MODEL);
+  });
+
   it("returns defaults when no config provided", () => {
     const config = resolveConfig();
 
@@ -132,13 +140,18 @@ describe("loadConfigFile", () => {
     expect(config.reviewers).toHaveLength(3);
   });
 
-  it("returns defaults when config file contains invalid JSON", () => {
+  it("returns defaults when config file contains invalid JSON and warns", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockedReadFileSync.mockReturnValue("not valid json {{{");
 
     const config = loadConfigFile("/fake/project");
 
     expect(config.reviewers).toHaveLength(3);
     expect(config.maxConcurrent).toBe(3);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy.mock.calls[0][0]).toContain("[code-review-council]");
+    expect(warnSpy.mock.calls[0][0]).toContain("Invalid JSON");
+    warnSpy.mockRestore();
   });
 
   it("overrides reviewers from config file", () => {

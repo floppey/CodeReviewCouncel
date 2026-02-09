@@ -87,18 +87,4 @@ export interface CouncilReport {
   totalDurationMs: number;
 }
 
-/**
- * Parse a "provider/model" string into a ModelIdentifier.
- */
-export function parseModelString(model: string): ModelIdentifier {
-  const slashIndex = model.indexOf("/");
-  if (slashIndex === -1) {
-    throw new Error(
-      `Invalid model format "${model}". Expected "provider/model" (e.g. "anthropic/claude-opus-4-20250514")`,
-    );
-  }
-  return {
-    providerID: model.slice(0, slashIndex),
-    modelID: model.slice(slashIndex + 1),
-  };
-}
+

@@ -1,11 +1,25 @@
-import type { DiffSource, ReviewResult } from "./types.js";
+import { readFile } from "node:fs/promises";
+import type { DiffSource, ModelIdentifier, ReviewResult } from "./types.js";
 
 /**
  * Shell executor interface — abstracted so we can mock it in tests.
+ * Used only for git commands, never for reading file contents.
  */
 export interface ShellExecutor {
   (cmd: string): Promise<string>;
 }
+
+/**
+ * File reader interface — abstracted so we can mock it in tests.
+ * Defaults to node:fs/promises readFile.
+ */
+export interface FileReader {
+  (path: string): Promise<string>;
+}
+
+/** Default file reader using node:fs/promises. */
+export const defaultFileReader: FileReader = async (path: string) =>
+  readFile(path, "utf-8");
 
 /**
  * Parse the /review command arguments into a DiffSource.
@@ -15,7 +29,7 @@ export interface ShellExecutor {
  *   - "staged"      → staged changes
  *   - "last-commit" → diff of last commit
  *   - "repo"        → entire repository contents
- *   - "file1 file2" → specific files
+ *   - "file1 file2" → specific files (supports quoted paths for spaces)
  */
 export function parseDiffSource(args: string): DiffSource {
   const trimmed = args.trim();
@@ -36,15 +50,39 @@ export function parseDiffSource(args: string): DiffSource {
     return { type: "repo" };
   }
 
-  // Treat as file paths (space-separated)
-  const paths = trimmed.split(/\s+/).filter(Boolean);
+  // Parse file paths, respecting quoted strings for paths with spaces.
+  // Supports: "path with spaces/file.ts" normalFile.ts 'another path.ts'
+  const paths: string[] = [];
+  const regex = /"([^"]+)"|'([^']+)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(trimmed)) !== null) {
+    const value = match[1] ?? match[2] ?? match[3];
+    if (value) {
+      paths.push(value);
+    }
+  }
+
   return { type: "files", paths };
 }
 
 /**
- * Build the git command for the given diff source.
+ * Empty-diff messages keyed by DiffSource type.
  */
-export function buildDiffCommand(source: DiffSource): string {
+const EMPTY_DIFF_MESSAGES: Record<DiffSource["type"], string> = {
+  unstaged: "No unstaged changes found. Nothing to review.",
+  staged: "No staged changes found. Nothing to review.",
+  "last-commit": "No changes in last commit. Nothing to review.",
+  repo: "No tracked files found in the repository. Nothing to review.",
+  files: "No content found for the specified files.",
+};
+
+/**
+ * Build the git command for diff-based sources.
+ * Only used for unstaged, staged, and last-commit — NOT for repo or files.
+ */
+export function buildGitDiffCommand(
+  source: Extract<DiffSource, { type: "unstaged" | "staged" | "last-commit" }>,
+): string {
   switch (source.type) {
     case "unstaged":
       return "git diff";
@@ -52,43 +90,79 @@ export function buildDiffCommand(source: DiffSource): string {
       return "git diff --cached";
     case "last-commit":
       return "git diff HEAD~1";
-    case "repo":
-      // List all tracked files (respects .gitignore), then for each file
-      // output a header with the filename and its contents.
-      return 'git ls-files | while IFS= read -r f; do echo "=== $f ==="; cat "$f"; echo; done';
-    case "files":
-      // For files we concatenate them with cat
-      return source.paths.map((p) => `cat "${p}"`).join(" && echo '---' && ");
   }
 }
 
 /**
- * Gather the diff content using the shell.
+ * Read file contents safely using fs, with per-file error handling.
+ * Returns a formatted string with headers for each file.
+ */
+async function readFilesContent(
+  paths: string[],
+  fileReader: FileReader,
+): Promise<string> {
+  const sections: string[] = [];
+
+  for (const filePath of paths) {
+    try {
+      const content = await fileReader(filePath);
+      sections.push(`=== ${filePath} ===\n${content}`);
+    } catch {
+      sections.push(`=== ${filePath} ===\n[Error: could not read file]`);
+    }
+  }
+
+  return sections.join("\n\n");
+}
+
+/**
+ * Gather the diff/content for review.
+ * Returns null when there is nothing to review.
+ *
+ * - For git diff operations: uses the shell executor.
+ * - For file reading (repo, files): uses fs.readFile (no shell interpolation).
  */
 export async function gatherDiff(
   source: DiffSource,
   exec: ShellExecutor,
-): Promise<string> {
-  const cmd = buildDiffCommand(source);
-  const output = await exec(cmd);
-
-  if (!output.trim()) {
-    if (source.type === "unstaged") {
-      return "No unstaged changes found. Nothing to review.";
+  fileReader: FileReader = defaultFileReader,
+): Promise<{ content: string } | { empty: string }> {
+  // Git-diff based sources
+  if (
+    source.type === "unstaged" ||
+    source.type === "staged" ||
+    source.type === "last-commit"
+  ) {
+    const cmd = buildGitDiffCommand(source);
+    const output = await exec(cmd);
+    if (!output.trim()) {
+      return { empty: EMPTY_DIFF_MESSAGES[source.type] };
     }
-    if (source.type === "staged") {
-      return "No staged changes found. Nothing to review.";
-    }
-    if (source.type === "last-commit") {
-      return "No changes in last commit. Nothing to review.";
-    }
-    if (source.type === "repo") {
-      return "No tracked files found in the repository. Nothing to review.";
-    }
-    return "No content found for the specified files.";
+    return { content: output };
   }
 
-  return output;
+  // Repo: list tracked files via git, then read them with fs
+  if (source.type === "repo") {
+    const fileList = await exec("git ls-files");
+    const files = fileList
+      .split("\n")
+      .map((f) => f.trim())
+      .filter(Boolean);
+
+    if (files.length === 0) {
+      return { empty: EMPTY_DIFF_MESSAGES.repo };
+    }
+
+    const content = await readFilesContent(files, fileReader);
+    return { content };
+  }
+
+  // Specific files: read directly with fs (no shell interpolation)
+  const content = await readFilesContent(source.paths, fileReader);
+  if (!content.trim() || source.paths.length === 0) {
+    return { empty: EMPTY_DIFF_MESSAGES.files };
+  }
+  return { content };
 }
 
 /**
@@ -161,17 +235,19 @@ ${synthesis}
 
 /**
  * Run promises with a concurrency limit.
+ * Results are returned in the same order as the input tasks.
  */
 export async function runWithConcurrency<T>(
   tasks: Array<() => Promise<T>>,
   maxConcurrent: number,
 ): Promise<T[]> {
-  const results: T[] = [];
+  const results: T[] = new Array(tasks.length);
   const executing: Set<Promise<void>> = new Set();
 
-  for (const task of tasks) {
-    const p = task().then((result) => {
-      results.push(result);
+  for (let i = 0; i < tasks.length; i++) {
+    const index = i;
+    const p = tasks[index]().then((result) => {
+      results[index] = result;
     });
     const wrapped = p.then(() => {
       executing.delete(wrapped);
@@ -185,6 +261,23 @@ export async function runWithConcurrency<T>(
 
   await Promise.all(executing);
   return results;
+}
+
+/**
+ * Parse a "provider/model" string into a ModelIdentifier.
+ * The provider is everything before the first slash; the model is the rest.
+ */
+export function parseModelString(model: string): ModelIdentifier {
+  const slashIndex = model.indexOf("/");
+  if (slashIndex <= 0) {
+    throw new Error(
+      `Invalid model format "${model}". Expected "provider/model" (e.g. "anthropic/claude-sonnet-4-20250514")`,
+    );
+  }
+  return {
+    providerID: model.slice(0, slashIndex),
+    modelID: model.slice(slashIndex + 1),
+  };
 }
 
 /**

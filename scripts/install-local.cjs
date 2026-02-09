@@ -1,14 +1,31 @@
+const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
 const DEST = ".opencode";
 
+// Create directories
 const dirs = ["plugins", "agents", "commands"];
 for (const dir of dirs) {
   fs.mkdirSync(path.join(DEST, dir), { recursive: true });
 }
 
-fs.copyFileSync("dist/index.js", path.join(DEST, "plugins", "code-review-council.js"));
+// Bundle the plugin into a single file using esbuild.
+// Externalize @opencode-ai/* (provided by host) and node builtins.
+const pluginDest = path.join(DEST, "plugins", "code-review-council.js");
+execSync(
+  [
+    "npx esbuild dist/index.js",
+    "--bundle",
+    "--platform=node",
+    "--format=esm",
+    "--external:@opencode-ai/plugin",
+    "--external:@opencode-ai/sdk",
+    `--outfile=${pluginDest}`,
+  ].join(" "),
+  { stdio: "inherit" },
+);
+console.log("Bundled plugin to " + pluginDest);
 
 for (const dir of ["agents", "commands"]) {
   for (const file of fs.readdirSync(dir)) {

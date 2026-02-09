@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseModelString } from "../src/types.js";
+import { parseModelString } from "../src/utils.js";
 
 describe("parseModelString", () => {
   it("parses a valid provider/model string", () => {

@@ -4,6 +4,42 @@ import { loadConfigFile } from "./config.js";
 import { parseDiffSource, gatherDiff, formatCouncilReport } from "./utils.js";
 import type { ShellExecutor } from "./utils.js";
 import { runCouncil } from "./orchestrator.js";
+import type { CouncilConfig, OpencodeClient } from "./types.js";
+
+/**
+ * Run the full review workflow: parse source, gather diff, run council, format report.
+ * Shared by both the slash command and the tool invocation.
+ *
+ * Returns the formatted report string, or an early-exit message when there's nothing to review.
+ */
+async function executeReview(
+  args: string,
+  sessionID: string,
+  client: OpencodeClient,
+  config: CouncilConfig,
+  exec: ShellExecutor,
+): Promise<string> {
+  const diffSource = parseDiffSource(args);
+  const diffResult = await gatherDiff(diffSource, exec);
+
+  // Typed return: { empty: string } means nothing to review
+  if ("empty" in diffResult) {
+    return diffResult.empty;
+  }
+
+  const report = await runCouncil(
+    client,
+    config,
+    diffResult.content,
+    sessionID,
+  );
+
+  return formatCouncilReport(
+    report.synthesis,
+    report.reviews,
+    report.totalDurationMs,
+  );
+}
 
 const plugin: Plugin = async (input) => {
   const { client, $, directory } = input;
@@ -11,11 +47,10 @@ const plugin: Plugin = async (input) => {
   // Load config from .opencode/code-review-council.json
   const councilConfig = loadConfigFile(directory);
 
-  // Shell executor using the BunShell provided by the plugin system.
-  // We use $.nothrow() so empty diffs don't throw, then read stdout as text.
-  const nothrowShell = $.nothrow();
+  // Shell executor: only used for git commands (diff, ls-files).
+  // $.nothrow() prevents throwing on non-zero exit codes (e.g. empty git diff).
   const exec: ShellExecutor = async (cmd: string): Promise<string> => {
-    const result = await nothrowShell`${cmd}`;
+    const result = await $.nothrow()`${cmd}`;
     return result.text();
   };
 
@@ -25,42 +60,17 @@ const plugin: Plugin = async (input) => {
         return;
       }
 
-      const diffSource = parseDiffSource(commandInput.arguments);
-      const diff = await gatherDiff(diffSource, exec);
-
-      // Check for empty diff
-      if (
-        diff.includes("Nothing to review.") ||
-        diff.includes("No content found")
-      ) {
-        output.parts.push({
-          type: "text" as "text",
-          text: diff,
-          id: "",
-          sessionID: commandInput.sessionID,
-          messageID: "",
-        });
-        return;
-      }
-
-      // Run the council
-      const report = await runCouncil(
+      const text = await executeReview(
+        commandInput.arguments,
+        commandInput.sessionID,
         client,
         councilConfig,
-        diff,
-        commandInput.sessionID,
-      );
-
-      // Format the report and push it as output parts
-      const formattedReport = formatCouncilReport(
-        report.synthesis,
-        report.reviews,
-        report.totalDurationMs,
+        exec,
       );
 
       output.parts.push({
         type: "text" as "text",
-        text: formattedReport,
+        text,
         id: "",
         sessionID: commandInput.sessionID,
         messageID: "",
@@ -80,27 +90,12 @@ const plugin: Plugin = async (input) => {
             ),
         },
         execute: async (args, context) => {
-          const diffSource = parseDiffSource(args.source ?? "");
-          const diff = await gatherDiff(diffSource, exec);
-
-          if (
-            diff.includes("Nothing to review.") ||
-            diff.includes("No content found")
-          ) {
-            return diff;
-          }
-
-          const report = await runCouncil(
+          return executeReview(
+            args.source ?? "",
+            context.sessionID,
             client,
             councilConfig,
-            diff,
-            context.sessionID,
-          );
-
-          return formatCouncilReport(
-            report.synthesis,
-            report.reviews,
-            report.totalDurationMs,
+            exec,
           );
         },
       }),
